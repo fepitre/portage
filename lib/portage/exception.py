@@ -143,6 +143,18 @@ class PackageSetNotFound(PortagePackageException):
 class InvalidPackageName(PortagePackageException):
 	"""Malformed package name"""
 
+class InvalidBinaryPackageFormat(PortagePackageException):
+	"""Invalid Binary Package Format"""
+
+class InvalidCompressionMethod(PortagePackageException):
+	"""Invalid or unsupported compression method"""
+
+class CompressorNotFound(PortagePackageException):
+	"""A required compressor binary was not available or executable"""
+
+class CompressorOperationFailed(PortagePackageException):
+	"""An error occurred during external operation"""
+
 class InvalidAtom(PortagePackageException):
 	"""Malformed atom spec"""
 	def __init__(self, value, category=None):
@@ -165,6 +177,9 @@ class UnsupportedAPIException(PortagePackageException):
 		return _unicode_decode(msg,
 			encoding=_encodings['content'], errors='replace')
 
+
+class GPGException(PortageException):
+	"""GPG operation failed"""
 
 class SignatureException(PortageException):
 	"""Signature was not present in the checked file"""

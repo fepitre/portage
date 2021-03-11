@@ -15,6 +15,7 @@ from portage import _encodings
 from portage import _unicode_decode
 from portage.const import (EPREFIX, GLOBAL_CONFIG_PATH, PORTAGE_BASE_PATH,
 	PORTAGE_BIN_PATH)
+from portage.output import colorize
 
 
 if portage._not_installed:
@@ -147,19 +148,43 @@ class TextTestResult(_TextTestResult):
 		self.todoed = []
 		self.portage_skipped = []
 
+	def addSuccess(self, test):
+		super(_TextTestResult, self).addSuccess(test)
+		if self.showAll:
+			self.stream.writeln(colorize("GOOD", "ok"))
+		elif self.dots:
+ 			self.stream.write(colorize("GOOD", '.'))
+ 			self.stream.flush()
+
+	def addError(self, test, err):
+		super(_TextTestResult, self).addError(test, err)
+		if self.showAll:
+			self.stream.writeln(colorize("BAD", "ERROR"))
+		elif self.dots:
+			self.stream.write(colorize("HILITE", 'E'))
+			self.stream.flush()
+
+	def addFailure(self, test, err):
+		super(_TextTestResult, self).addFailure(test, err)
+		if self.showAll:
+			self.stream.writeln(colorize("BAD", "FAIL"))
+		elif self.dots:
+			self.stream.write(colorize("BAD", 'F'))
+			self.stream.flush()
+
 	def addTodo(self, test, info):
 		self.todoed.append((test, info))
 		if self.showAll:
-			self.stream.writeln("TODO")
+			self.stream.writeln(colorize("BRACKET", "TODO"))
 		elif self.dots:
-			self.stream.write(".")
+			self.stream.write(colorize("BRACKET", "."))
 
 	def addPortageSkip(self, test, info):
 		self.portage_skipped.append((test, info))
 		if self.showAll:
-			self.stream.writeln("SKIP")
+			self.stream.writeln(colorize("WARN", "SKIP"))
 		elif self.dots:
-			self.stream.write(".")
+			self.stream.write(colorize("WARN", "."))
 
 	def printErrors(self):
 		if self.dots or self.showAll:
@@ -303,7 +328,7 @@ class TextTestRunner(unittest.TextTestRunner):
 							(run, run != 1 and "s" or "", timeTaken))
 		self.stream.writeln()
 		if not result.wasSuccessful():
-			self.stream.write("FAILED (")
+			self.stream.write(colorize("BAD", "FAILED") +" (")
 			failed = len(result.failures)
 			errored = len(result.errors)
 			if failed:
@@ -313,7 +338,7 @@ class TextTestRunner(unittest.TextTestRunner):
 				self.stream.write("errors=%d" % errored)
 			self.stream.writeln(")")
 		else:
-			self.stream.writeln("OK")
+			self.stream.writeln(colorize("GOOD", "OK"))
 		return result
 
 test_cps = ['sys-apps/portage', 'virtual/portage']

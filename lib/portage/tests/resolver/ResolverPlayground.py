@@ -9,7 +9,9 @@ import portage
 from itertools import permutations
 from portage import os
 from portage import shutil
-from portage.const import (GLOBAL_CONFIG_PATH, USER_CONFIG_PATH)
+from portage.const import (GLOBAL_CONFIG_PATH, USER_CONFIG_PATH,
+	SUPPORTED_GENTOO_BINPKG_FORMATS,
+)
 from portage.process import find_binary
 from portage.dep import Atom, _repo_separator
 from portage.package.ebuild.config import config
@@ -19,6 +21,8 @@ from portage._sets.base import InternalPackageSet
 from portage.tests import cnf_path
 from portage.util import ensure_dirs, normalize_path
 from portage.versions import catsplit
+from portage.exception import InvalidBinaryPackageFormat
+from portage.gpg import GPG
 
 import _emerge
 from _emerge.actions import _calc_depclean
@@ -155,13 +159,14 @@ class ResolverPlayground:
 
 		self._create_distfiles(distfiles)
 		self._create_ebuilds(ebuilds)
-		self._create_binpkgs(binpkgs)
 		self._create_installed(installed)
 		self._create_profile(ebuilds, eclasses, installed, profile, repo_configs, user_config, sets)
 		self._create_world(world, world_sets)
 
 		self.settings, self.trees = self._load_config()
 
+		self.gpg = None
+		self._create_binpkgs(binpkgs)
 		self._create_ebuild_manifests(ebuilds)
 
 		portage.util.noiselimit = 0
@@ -268,6 +273,11 @@ class ResolverPlayground:
 		# a dict.
 		items = getattr(binpkgs, 'items', None)
 		items = items() if items is not None else binpkgs
+		binpkg_format = self.settings.get("BINPKG_FORMAT", SUPPORTED_GENTOO_BINPKG_FORMATS[0])
+		if binpkg_format == "gpkg":
+			if self.gpg is None:
+				self.gpg = GPG(self.settings)
+				self.gpg.unlock()
 		for cpv, metadata in items:
 			a = Atom("=" + cpv, allow_repo=True)
 			repo = a.repo
@@ -283,18 +293,36 @@ class ResolverPlayground:
 			metadata["repository"] = repo
 			metadata["CATEGORY"] = cat
 			metadata["PF"] = pf
+			metadata["BINPKG_FORMAT"] = binpkg_format
 
 			repo_dir = self.pkgdir
 			category_dir = os.path.join(repo_dir, cat)
 			if "BUILD_ID" in metadata:
-				binpkg_path = os.path.join(category_dir, pn,
-					"%s-%s.xpak"% (pf, metadata["BUILD_ID"]))
+				if binpkg_format == "xpak":
+					binpkg_path = os.path.join(category_dir, pn,
+						"%s-%s.xpak"% (pf, metadata["BUILD_ID"]))
+				elif binpkg_format == "gpkg":
+					binpkg_path = os.path.join(category_dir, pn,
+						"%s-%s.gpkg.tar"% (pf, metadata["BUILD_ID"]))
+				else:
+					raise InvalidBinaryPackageFormat(binpkg_format)
 			else:
-				binpkg_path = os.path.join(category_dir, pf + ".tbz2")
+				if binpkg_format == "xpak":
+					binpkg_path = os.path.join(category_dir, pf + ".tbz2")
+				elif binpkg_format == "gpkg":
+					binpkg_path = os.path.join(category_dir, pf + ".gpkg.tar")
+				else:
+					raise InvalidBinaryPackageFormat(binpkg_format)
 
 			ensure_dirs(os.path.dirname(binpkg_path))
-			t = portage.xpak.tbz2(binpkg_path)
-			t.recompose_mem(portage.xpak.xpak_mem(metadata))
+			if binpkg_format == "xpak":
+				t = portage.xpak.tbz2(binpkg_path)
+				t.recompose_mem(portage.xpak.xpak_mem(metadata))
+			elif binpkg_format == "gpkg":
+				t = portage.gpkg.gpkg(self.settings, a.cpv, binpkg_path)
+				t.compress(os.path.dirname(binpkg_path), metadata)
+			else:
+				raise InvalidBinaryPackageFormat(binpkg_format)
 
 	def _create_installed(self, installed):
 		for cpv in installed:
@@ -454,11 +482,31 @@ class ResolverPlayground:
 				#Create profile symlink
 				os.symlink(sub_profile_dir, os.path.join(user_config_dir, "make.profile"))
 
+		gpg_test_path = os.environ["GNUPGHOME"]
+
 		make_conf = {
 			"ACCEPT_KEYWORDS": "x86",
+			"BINPKG_GPG_UNLOCK_COMMAND":
+				'/usr/bin/gpg --detach-sig --armor --batch --no-tty --yes '
+				'--digest-algo SHA256 --homedir "%s" '
+				'--pinentry-mode loopback --passphrase "GentooTest" '
+				'--local-user 5D90EA06352177F6 --output /dev/null /dev/null'
+				% gpg_test_path,
+			"BINPKG_GPG_SIGNING_COMMAND":
+				'/usr/bin/gpg --detach-sig --armor --batch --no-tty --yes '
+				'--digest-algo SHA256 --homedir "%s" '
+				'--local-user 5D90EA06352177F6'
+				% gpg_test_path,
+			"BINPKG_GPG_VERIFY_COMMAND":
+				'/usr/bin/gpg --verify --batch --no-tty --yes --status-fd 1 '
+				'--homedir "%s" "\\\\${SIGN_FILE}" -'
+				% gpg_test_path,
 			"CLEAN_DELAY": "0",
 			"DISTDIR" : self.distdir,
 			"EMERGE_WARNING_DELAY": "0",
+			"FEATURES":
+				'${FEATURES} binpkg-signing binpkg-request-signature '
+				'gpg-keepalive',
 			"PKGDIR": self.pkgdir,
 			"PORTAGE_INST_GID": str(portage.data.portage_gid),
 			"PORTAGE_INST_UID": str(portage.data.portage_uid),
@@ -632,6 +680,8 @@ class ResolverPlayground:
 				return
 
 	def cleanup(self):
+		if self.gpg is not None:
+			self.gpg.stop()
 		for eroot in self.trees:
 			portdb = self.trees[eroot]["porttree"].dbapi
 			portdb.close_caches()

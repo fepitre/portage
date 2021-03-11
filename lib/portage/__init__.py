@@ -110,6 +110,7 @@ try:
 			'cpv_getkey@getCPFromCPV,endversion_keys,' + \
 			'suffix_value@endversion,pkgcmp,pkgsplit,vercmp,ververify',
 		'portage.xpak',
+		'portage.gpkg',
 		'subprocess',
 		'time',
 	)
